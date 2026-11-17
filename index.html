@@ -111,6 +111,7 @@ details.sec>summary p{display:inline;margin:0}
   <h1>SzámArch · ZH2</h1>
   <nav id="nav">
     <a href="#kartyak">Kártyák</a>
+    <a href="#ossz-kartyak">Összefoglaló kártyák</a>
     <a href="#igaz-hamis">Igaz–hamis</a>
     <a href="#kerdesek">Kérdésbank</a>
     <a href="#lista">Igaz–hamis lista</a>
@@ -124,6 +125,14 @@ details.sec>summary p{display:inline;margin:0}
   <div class="meter"><span id="fc-count"></span><div class="track"><div class="fill" id="fc-fill"></div></div><span id="fc-known"></span></div>
   <div class="card" id="fc-card"></div>
   <div class="tools"><button class="btn small" id="fc-shuffle">Újrakeverés</button><button class="btn small" id="fc-reset">Kártya-haladás törlése</button>
+  <span class="hint">Szóköz: válasz · → tudtam · ← nem tudtam</span></div>
+</section>
+
+<section id="v-ossz-kartyak">
+  <div class="tools" id="sc-decks"></div>
+  <div class="meter"><span id="sc-count"></span><div class="track"><div class="fill" id="sc-fill"></div></div><span id="sc-known"></span></div>
+  <div class="card" id="sc-card"></div>
+  <div class="tools"><button class="btn small" id="sc-shuffle">Újrakeverés</button><button class="btn small" id="sc-reset">Kártya-haladás törlése</button>
   <span class="hint">Szóköz: válasz · → tudtam · ← nem tudtam</span></div>
 </section>
 
@@ -195,46 +204,49 @@ function answerHtml(q){
   return h;
 }
 
-/* ---------- Kártyák ---------- */
-const answered = Q.filter(q => !q.open);
-const fc = { deck:"all", queue:[], shown:false, known: new Set(store.get("known", [])), total:0 };
+/* ---------- Kártyák (két külön pakli: vizsgakérdések és összefoglaló) ---------- */
 const TOPICS = [...new Set(Q.filter(q => q.topic).map(q => q.topic))];
-const DECKS = [["all","Mind"],["2025","2025 A csoport"],["A","Régi A"],["B","Régi B"],["S","Összefoglaló (mind)"],...TOPICS.map(t => ["T:"+t,"Össz.: "+t]),["unknown","Amit még nem tudok"]];
-function fcPool(){
-  if(fc.deck==="all") return answered;
-  if(fc.deck==="unknown") return answered.filter(q => !fc.known.has(q.id));
-  if(fc.deck.startsWith("T:")) return answered.filter(q => q.topic === fc.deck.slice(2));
-  return answered.filter(q => q.src.includes(fc.deck));
+function makeDeck(p, cards, decks, filter, storeKey){
+  const d = { deck:"all", queue:[], shown:false, known: new Set(store.get(storeKey, [])), total:0 };
+  const pool = () => d.deck==="all" ? cards : d.deck==="unknown" ? cards.filter(q => !d.known.has(q.id)) : cards.filter(q => filter(q, d.deck));
+  d.start = () => { d.queue = shuffle(pool()); d.total = d.queue.length; d.shown = false; d.render(); };
+  d.render = () => {
+    $(p+"-decks").innerHTML = decks.map(([k,l]) => `<button class="chip" data-k="${k}" aria-pressed="${d.deck===k}">${l}</button>`).join("");
+    const kn = cards.filter(q => d.known.has(q.id)).length;
+    $(p+"-known").textContent = `tudom: ${kn}/${cards.length}`;
+    $(p+"-fill").style.width = (100*kn/cards.length)+"%";
+    const q = d.queue[0], c = $(p+"-card");
+    if(!q){
+      $(p+"-count").textContent = "kész";
+      c.innerHTML = `<div class="done"><strong>${d.total ? "Végigértél a paklin" : "Ebben a pakliban nincs kártya"}</strong><p class="hint">Tudom: ${kn}/${cards.length}</p><button class="btn primary" data-act="again">Újra</button></div>`;
+      return;
+    }
+    $(p+"-count").textContent = `hátra: ${d.queue.length}`;
+    c.innerHTML = `<div class="tags">${tagsHtml(q)}</div><p class="q">${esc(q.q)}</p>` +
+      (d.shown
+        ? `<div class="ans">${answerHtml(q)}</div><div class="row"><button class="btn bad" data-act="no">Nem tudtam<kbd>←</kbd></button><button class="btn good" data-act="yes">Tudtam<kbd>→</kbd></button></div>`
+        : `<button class="btn primary" data-act="show">Válasz mutatása<kbd>Szóköz</kbd></button>`);
+  };
+  d.show = () => { if(!d.shown && d.queue[0]){ d.shown = true; d.render(); } };
+  d.mark = ok => {
+    const q = d.queue.shift(); if(!q) return;
+    if(ok) d.known.add(q.id);
+    else { d.known.delete(q.id); d.queue.splice(Math.min(d.queue.length, 3), 0, q); }
+    store.set(storeKey, [...d.known]); d.shown = false; d.render();
+  };
+  $(p+"-card").onclick = e => { const a = e.target.closest("[data-act]")?.dataset.act;
+    if(a==="show") d.show(); else if(a==="yes") d.mark(true); else if(a==="no") d.mark(false); else if(a==="again") d.start(); };
+  $(p+"-decks").onclick = e => { const b = e.target.closest("[data-k]"); if(b){ d.deck = b.dataset.k; d.start(); } };
+  $(p+"-shuffle").onclick = d.start;
+  $(p+"-reset").onclick = () => { d.known.clear(); store.set(storeKey, []); d.start(); };
+  return d;
 }
-function fcStart(){ fc.queue = shuffle(fcPool()); fc.total = fc.queue.length; fc.shown = false; fcRender(); }
-function fcRender(){
-  $("fc-decks").innerHTML = DECKS.map(([k,l]) => `<button class="chip" data-k="${k}" aria-pressed="${fc.deck===k}">${l}</button>`).join("");
-  const kn = answered.filter(q => fc.known.has(q.id)).length;
-  $("fc-known").textContent = `tudom: ${kn}/${answered.length}`;
-  $("fc-fill").style.width = (100*kn/answered.length)+"%";
-  const q = fc.queue[0], c = $("fc-card");
-  if(!q){
-    $("fc-count").textContent = "kész";
-    c.innerHTML = `<div class="done"><strong>${fc.total ? "Végigértél a paklin" : "Ebben a pakliban nincs kártya"}</strong><p class="hint">Tudom: ${kn}/${answered.length}</p><button class="btn primary" id="fc-again">Újra</button></div>`;
-    $("fc-again").onclick = fcStart; return;
-  }
-  $("fc-count").textContent = `hátra: ${fc.queue.length}`;
-  c.innerHTML = `<div class="tags">${tagsHtml(q)}</div><p class="q">${esc(q.q)}</p>` +
-    (fc.shown
-      ? `<div class="ans">${answerHtml(q)}</div><div class="row"><button class="btn bad" id="fc-no">Nem tudtam<kbd>←</kbd></button><button class="btn good" id="fc-yes">Tudtam<kbd>→</kbd></button></div>`
-      : `<button class="btn primary" id="fc-show">Válasz mutatása<kbd>Szóköz</kbd></button>`);
-  if(fc.shown){ $("fc-no").onclick = () => fcMark(false); $("fc-yes").onclick = () => fcMark(true); }
-  else $("fc-show").onclick = () => { fc.shown = true; fcRender(); };
-}
-function fcMark(ok){
-  const q = fc.queue.shift(); if(!q) return;
-  if(ok) fc.known.add(q.id);
-  else { fc.known.delete(q.id); fc.queue.splice(Math.min(fc.queue.length, 3), 0, q); }
-  store.set("known", [...fc.known]); fc.shown = false; fcRender();
-}
-$("fc-decks").onclick = e => { const b = e.target.closest("[data-k]"); if(b){ fc.deck = b.dataset.k; fcStart(); } };
-$("fc-shuffle").onclick = fcStart;
-$("fc-reset").onclick = () => { fc.known.clear(); store.set("known", []); fcStart(); };
+const fc = makeDeck("fc", Q.filter(q => !q.open && !q.topic),
+  [["all","Mind"],["2025","2025 A csoport"],["A","Régi A"],["B","Régi B"],["unknown","Amit még nem tudok"]],
+  (q, k) => q.src.includes(k), "known");
+const sc = makeDeck("sc", Q.filter(q => q.topic),
+  [["all","Mind"],...TOPICS.map(t => [t,t]),["unknown","Amit még nem tudok"]],
+  (q, k) => q.topic === k, "known_summary");
 
 /* ---------- Igaz–hamis ---------- */
 const tf = { mode:"all", queue:[], cur:null, answered:null, right:0, tries:0, total:0, wrong: new Set(store.get("wrong", [])) };
@@ -286,12 +298,12 @@ $("tf-reset").onclick = () => { tf.wrong.clear(); store.set("wrong", []); tfStar
 
 /* ---------- Kérdésbank ---------- */
 const qb = { f:"all", hide:false };
-const QBF = [["all","Mind"],["2025","2025 A csoport"],["A","Régi A"],["B","Régi B"],["S","Összefoglaló"],["open","Nincs kidolgozva"]];
+const QBF = [["all","Mind"],["2025","2025 A csoport"],["A","Régi A"],["B","Régi B"],["open","Nincs kidolgozva"]];
 function qbRender(){
   $("qb-filters").innerHTML = QBF.map(([k,l]) => `<button class="chip" data-k="${k}" aria-pressed="${qb.f===k}">${l}</button>`).join("") +
     `<button class="chip" id="qb-hide" aria-pressed="${qb.hide}">Válaszok elrejtése</button>`;
   const s = norm($("qb-search").value.trim());
-  const rows = Q.filter(q => (qb.f==="all" || (qb.f==="open" ? q.open : q.src.includes(qb.f))) &&
+  const rows = Q.filter(q => !q.topic && (qb.f==="all" || (qb.f==="open" ? q.open : q.src.includes(qb.f))) &&
     (!s || norm(q.q + " " + (q.e||"") + " " + (q.topic||"") + " " + (q.a||[]).join(" ") + " " + (q.alt||[]).join(" ") + " " + (q.rel||[]).join(" ") + " " + (q.note||"")).includes(s)));
   $("qb-count").textContent = `${rows.length} kérdés`;
   $("qb-list").innerHTML = rows.map(q => `<div class="item"><div class="tags">${tagsHtml(q)}</div><h3>${esc(q.q)}</h3>` +
@@ -363,7 +375,7 @@ $("sm-search").oninput = smRender;
 $("sm-open").onclick = () => document.querySelectorAll("#sm-body details").forEach(d => d.open = true);
 $("sm-close").onclick = () => document.querySelectorAll("#sm-body details").forEach(d => d.open = false);
 
-const VIEWS = ["kartyak","igaz-hamis","kerdesek","lista","osszefoglalo"];
+const VIEWS = ["kartyak","ossz-kartyak","igaz-hamis","kerdesek","lista","osszefoglalo"];
 let view = "kartyak";
 function route(){
   const h = location.hash.replace("#","");
@@ -377,16 +389,17 @@ window.addEventListener("hashchange", route);
 document.addEventListener("keydown", e => {
   if(e.target.tagName === "INPUT" || e.ctrlKey || e.metaKey || e.altKey) return;
   const k = e.key.toLowerCase();
-  if(view === "kartyak"){
-    if(k === " " || k === "enter"){ e.preventDefault(); if(!fc.shown && fc.queue[0]){ fc.shown = true; fcRender(); } }
-    else if(fc.shown && k === "arrowright") fcMark(true);
-    else if(fc.shown && k === "arrowleft") fcMark(false);
+  if(view === "kartyak" || view === "ossz-kartyak"){
+    const d = view === "kartyak" ? fc : sc;
+    if(k === " " || k === "enter"){ e.preventDefault(); d.show(); }
+    else if(d.shown && k === "arrowright") d.mark(true);
+    else if(d.shown && k === "arrowleft") d.mark(false);
   } else if(view === "igaz-hamis"){
     if(tf.answered === null){ if(k === "i") tfAnswer(true); else if(k === "h") tfAnswer(false); }
     else if(k === "enter" || k === " "){ e.preventDefault(); tfNext(); }
   }
 });
-fcStart(); tfStart(); qbRender(); tlRender(); route();
+fc.start(); sc.start(); tfStart(); qbRender(); tlRender(); route();
 </script>
 </body>
 </html>
